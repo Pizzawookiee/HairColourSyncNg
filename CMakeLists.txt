@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 project(HairColourSyncNg LANGUAGES CXX)
 
-find_package(CommonLibSSE CONFIG REQUIRED)
+set(BUILD_TESTS OFF)
+add_subdirectory(extern/CommonLibSSE-NG)
 
 # Plain DLL: the sources define their own SKSEPlugin_Version / Query / Load exports.
 add_library(${PROJECT_NAME} SHARED dllmain.cpp plugin.cpp)
