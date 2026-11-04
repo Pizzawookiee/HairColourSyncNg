@@ -1,0 +1,93 @@
+name: Build SKSE Plugin
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Release x64 (SE / AE / VR)
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    env:
+      VCPKG_DOWNLOADS: ${{ github.workspace }}/vcpkg_downloads
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg_binary_cache,readwrite
+      VCPKG_FORCE_SYSTEM_BINARIES: '1'
+
+    steps:
+      - name: Check out repository and nested submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up MSVC x64
+        uses: TheMrMilchmann/setup-msvc-dev@v4.0.0
+        with:
+          arch: x64
+
+      - name: Set up vcpkg from the manifest baseline
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgJsonGlob: vcpkg.json
+          runVcpkgInstall: false
+
+      - name: Cache vcpkg downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg_downloads
+          key: vcpkg-downloads-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-downloads-
+
+      - name: Cache compiled vcpkg dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg_binary_cache
+          key: vcpkg-win2022-static-md-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-win2022-static-md-
+
+      - name: Configure CMake (Release x64)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL `
+            -DBUILD_TESTS=OFF `
+            -DCOMMONLIB_ENABLE_IPO=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+
+      - name: Build SKSE plugin
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target HairColourSyncNg --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Plugin build failed' }
+
+      - name: Stage SKSE plugin
+        shell: pwsh
+        run: |
+          $dll = Join-Path $PWD 'build/HairColourSyncNg.dll'
+          if (!(Test-Path $dll)) { throw "Expected plugin DLL not found: $dll" }
+          New-Item -ItemType Directory -Force -Path 'dist/SKSE/Plugins' | Out-Null
+          Copy-Item $dll 'dist/SKSE/Plugins/HairColourSyncNg.dll'
+          Get-Item 'dist/SKSE/Plugins/HairColourSyncNg.dll' | Format-List Name, Length
+
+      - name: Upload installable plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairColourSyncNg-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
